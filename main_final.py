@@ -2,38 +2,41 @@
 import streamlit as st
 import os
 from datetime import datetime
-from typing import Dict, List, Optional
 import hashlib
 from langchain_community.embeddings import HuggingFaceBgeEmbeddings
+from langchain_community.document_loaders import UnstructuredPDFLoader
 from langchain_community.vectorstores import Qdrant
 from qdrant_client import QdrantClient
-from langchain_groq import ChatGroq
 from langchain.prompts import PromptTemplate
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import Document 
 import numpy as np
 import tempfile
 import cv2
-import re
 from pdfminer.high_level import extract_text
 from pdfminer.layout import LAParams
 import easyocr
-import mysql.connector
 import speech_recognition as sr
+import mysql.connector
+import base64
+from typing import List, Dict, Optional
+import json
+from io import BytesIO
 from dotenv import load_dotenv
 load_dotenv()
-        
-# db_manager.py
+
+qdrant_url = os.getenv("QDRANT_URL")
+
 class DatabaseManager:
     def __init__(self):
         # Database connection configuration
         self.db_config = {
             "pool_name": "mypool",
             "pool_size": 5,
-            "host": "localhost",
-            "user": "root",
-            "password": "Karan@04",
-            "database": "academic_chatbot"
+            "host": os.getenv("MYSQL_HOST"),
+            "user": os.getenv("MYSQL_USER"),
+            "password": os.getenv("MYSQL_PASSWORD"),
+            "database": os.getenv("MYSQL_DATABASE")
         }
         
         # Initialize connection pool
@@ -425,7 +428,6 @@ class DatabaseManager:
             if connection:
                 connection.close()
 
-# voice_chat.py
 class VoiceChatManager:
     def __init__(self):
         self.recognizer = sr.Recognizer()
@@ -498,6 +500,17 @@ def add_voice_chat_ui(tab1):
             ])
             st.session_state.subject_chat_histories[st.session_state.current_subject] = current_history
 
+# Function to display the PDF of a given file
+def displayPDF(file):
+    # Reading the uploaded file
+    base64_pdf = base64.b64encode(file.read()).decode('utf-8')
+
+    # Embedding PDF in HTML
+    pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="600" type="application/pdf"></iframe>'
+
+    # Displaying the PDF
+    st.markdown(pdf_display, unsafe_allow_html=True)
+
 class SyllabusManager:
     def __init__(self):
         self.embeddings = HuggingFaceBgeEmbeddings(
@@ -505,7 +518,7 @@ class SyllabusManager:
             model_kwargs={"device": "cpu"},
             encode_kwargs={"normalize_embeddings": True}
         )
-        self.client = QdrantClient(url="http://localhost:6333", prefer_grpc=False)
+        self.client = QdrantClient(url=qdrant_url, prefer_grpc=False)
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=250
@@ -518,38 +531,61 @@ class SyllabusManager:
             char_margin=2.0,
             boxes_flow=0.5
         )
-    
+
     def display_file_preview(self, file, st) -> None:
         """Display a preview of the uploaded file"""
         try:
             file_extension = file.name.split('.')[-1].lower()
+
+            if 'show_file_preview' not in st.session_state:
+                st.session_state.show_file_preview = False
+
+            # Create a button to toggle the preview visibility
+            if st.button("📄 Show/Hide Syllabus"):
+                st.session_state.show_file_preview = not st.session_state.show_file_preview
             
-            if file_extension in ['png', 'jpg', 'jpeg']:
-                # Create columns for image display and info
-                col1, col2 = st.columns([2, 1])
-                with col1:
-                    st.image(file, caption="Uploaded Image", use_column_width=True)
-                with col2:
-                    st.write("File Information:")
-                    st.write(f"- Name: {file.name}")
-                    st.write(f"- Size: {file.size//1024} KB")
-                    st.write(f"- Type: {file.type}")
+            if st.session_state.show_file_preview:
+                if file_extension in ['png', 'jpg', 'jpeg']:
+                    # Create columns for image display and info
+                    col1, col2 = st.columns([2, 1])
+                    with col1:
+                        st.image(file, caption="Uploaded Image", use_column_width=True)
+                    with col2:
+                        st.write("File Information:")
+                        st.write(f"- Name: {file.name}")
+                        st.write(f"- Size: {file.size//1024} KB")
+                        st.write(f"- Type: {file.type}")
             
             elif file_extension == 'pdf':
                 # Display PDF information and first page preview
                 st.write("PDF File Information:")
-                st.write(f"- Name: {file.name}")
-                st.write(f"- Size: {file.size//1024} KB")
+                # st.write(f"- Name: {file.name}")
+                # st.write(f"- Size: {file.size//1024} KB")
                 
-                # Create a temporary file to read PDF content
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-                    tmp_file.write(file.read())
-                    tmp_path = tmp_file.name
+                # # Create a temporary file to read PDF content
+                # with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+                #     tmp_file.write(file.read())
+                #     tmp_path = tmp_file.name
                 
-                # Extract first page text for preview
-                extracted_text = extract_text(tmp_path, maxpages=1, laparams=self.pdf_params)
-                with st.expander("Preview PDF Content (First Page)"):
-                    st.text(extracted_text[:1000] + "...")
+                # # Extract first page text for preview
+                # extracted_text = extract_text(tmp_path, maxpages=1, laparams=self.pdf_params)
+                # with st.expander("Preview PDF Content (First Page)"):
+                #     st.text(extracted_text[:1000] + "...")
+                # Display file name and size
+                st.markdown(f"**Filename:** {file.name}")
+                st.markdown(f"**File Size:** {file.size} bytes")
+                
+                # Display PDF preview using displayPDF function
+                st.markdown("### 📖 PDF Preview")
+                displayPDF(file)
+                
+                # Save the uploaded file to a temporary location
+                tmp_path = "temp.pdf"
+                with open(tmp_path, "wb") as f:
+                    f.write(file.getbuffer())
+                
+                # Store the temp_pdf_path in session_state
+                st.session_state['temp_pdf_path'] = tmp_path
                 
                 # Reset file pointer for later processing
                 file.seek(0)
@@ -596,7 +632,7 @@ class SyllabusManager:
             Qdrant.from_documents(
                 documents=texts,
                 embedding=self.embeddings,
-                url="http://localhost:6333",
+                url=qdrant_url,
                 prefer_grpc=False,
                 collection_name=collection_name
             )
@@ -695,6 +731,30 @@ class SyllabusManager:
             
             file_content = file.read()
             file_extension = file.name.split('.')[-1].lower()
+
+            if subject_name:
+                # Create directory if it doesn't exist
+                os.makedirs(f"user_files/{username}", exist_ok=True)
+
+            # Save the file with a standardized name
+            file_path = f"user_files/{username}/{subject_name}.{file_extension}"
+            with open(file_path, "wb") as f:
+                f.write(file_content)
+
+            # Store the file path in metadata
+            file_metadata = {
+                "file_path": file_path,
+                "file_type": file_extension,
+                "upload_date": datetime.now().isoformat()
+            }
+
+            # Save metadata to a JSON file or database
+            metadata_path = f"user_files/{username}/{subject_name}_metadata.json"
+            with open(metadata_path, "w") as f:
+                json.dump(file_metadata, f)
+
+            # Reset file pointer for processing
+            file.seek(0)
             
             if file_extension == 'pdf':
                 return self._process_pdf(file_content, username, subject_name)
@@ -730,7 +790,7 @@ class SyllabusManager:
             Qdrant.from_documents(
                 documents=texts,
                 embedding=self.embeddings,
-                url="http://localhost:6333",
+                url=qdrant_url,
                 prefer_grpc=False,
                 collection_name=collection_name
             )
@@ -739,6 +799,53 @@ class SyllabusManager:
             return topics
         finally:
             os.unlink(tmp_path)
+
+    def display_subject_syllabus(self, username: str, subject_name: str, st) -> None:
+        """Display the syllabus file for a previously uploaded subject"""
+        try:
+            # Check if metadata exists for this subject
+            metadata_path = f"user_files/{username}/{subject_name}_metadata.json"
+            if not os.path.exists(metadata_path):
+                st.warning(f"No syllabus file found for {subject_name}")
+                return
+                
+            # Load metadata
+            with open(metadata_path, "r") as f:
+                metadata = json.load(f)
+                
+            # Get file path and type
+            file_path = metadata["file_path"]
+            file_type = metadata["file_type"]
+            
+            # Initialize toggle state if needed
+            if 'show_subject_syllabus' not in st.session_state:
+                st.session_state.show_subject_syllabus = False
+                
+            # Create toggle button with dynamic text
+            button_text = "Hide Syllabus" if st.session_state.show_subject_syllabus else "Show Syllabus"
+            if st.button(f"📄 {button_text}"):
+                st.session_state.show_subject_syllabus = not st.session_state.show_subject_syllabus
+                
+            # Display syllabus if toggled on
+            if st.session_state.show_subject_syllabus:
+                st.markdown(f"### 📚 Syllabus for {subject_name}")
+                
+                if file_type == 'pdf':
+                    # Open the stored PDF file
+                    with open(file_path, "rb") as f:
+                        pdf_data = f.read()
+                        
+                    # Display PDF
+                    st.markdown(f"**File Type:** PDF")
+                    displayPDF(BytesIO(pdf_data))
+                    
+                elif file_type in ['png', 'jpg', 'jpeg']:
+                    # Display image
+                    st.markdown(f"**File Type:** Image")
+                    st.image(file_path, caption=f"{subject_name} Syllabus", use_column_width=True)
+                    
+        except Exception as e:
+            st.error(f"Error displaying syllabus: {str(e)}")
         
     def delete_subject_collection(self, username: str, subject_name: str) -> bool:
         """Delete a subject's collection from Qdrant"""
@@ -773,6 +880,7 @@ class SyllabusManager:
                     continue
                 
                 # Check for unit headers
+                import re
                 for pattern in common_unit_patterns:
                     if re.match(pattern, line, re.IGNORECASE):
                         current_unit = line
@@ -842,7 +950,7 @@ class ExamMode:
             model_kwargs={"device": "cpu"},
             encode_kwargs={"normalize_embeddings": True}
         )
-        self.client = QdrantClient(url="http://localhost:6333", prefer_grpc=False)
+        self.client = QdrantClient(url=qdrant_url, prefer_grpc=False)
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=250
@@ -1025,7 +1133,7 @@ class ExamMode:
                 Qdrant.from_documents(
                     documents=chunks,
                     embedding=self.embeddings,
-                    url="http://localhost:6333",
+                    url=qdrant_url,
                     prefer_grpc=False,
                     collection_name=collection_name
                 )
@@ -1294,7 +1402,7 @@ class ExamMode:
         Qdrant.from_documents(
             documents=[doc],
             embedding=self.embeddings,
-            url="http://localhost:6333",
+            url=qdrant_url,
             prefer_grpc=False,
             collection_name=collection_name
         )
@@ -1671,14 +1779,16 @@ class UserManager:
                 # Add new topics
                 for topic in topics:
                     self.db.add_topic(subject_id, topic, is_custom=False)
-
+from langchain_groq import ChatGroq
+from dotenv import load_dotenv
+load_dotenv()
 class AcademicChatbot:
     def __init__(self):
         
         self.llm = ChatGroq(
             temperature=0.7,
-            groq_api_key = os.getenv("GROQ_API_KEY"),
-            model_name="llama-3.1-70b-versatile",
+            groq_api_key = os.getenv("GROQ_API_KEY", "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"),
+            model_name="llama-3.3-70b-versatile",
             )
 
         self.exam_mode = ExamMode(self.llm)
@@ -1913,6 +2023,8 @@ def main():
             # Show syllabus management for selected subject
             if user_subjects and selected_subject:
                 st.subheader(f"Manage Syllabus for {selected_subject}")
+                syllabus_manager = SyllabusManager()
+                syllabus_manager.display_subject_syllabus(st.session_state.user, selected_subject, st)
                 
                 # File upload section
                 uploaded_file = st.file_uploader(
