@@ -1787,7 +1787,7 @@ class AcademicChatbot:
         
         self.llm = ChatGroq(
             temperature=0.7,
-            groq_api_key = os.getenv("GROQ_API_KEY", "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"),
+            groq_api_key = os.getenv("GROQ_API_KEY"),
             model_name="llama-3.3-70b-versatile",
             )
 
