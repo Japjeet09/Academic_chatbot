@@ -1925,7 +1925,28 @@ def main():
                 st.rerun()
 
     # Main content
-    if st.session_state.user is not None:
+    if st.session_state.user is None:
+        # Display welcome image and message when not logged in
+        col1, col2 = st.columns([2, 2])
+        
+        with col1:
+            st.title("Welcome to AceBot")
+            st.subheader("Your AI Academic Assistant")
+            st.write("""
+            AceBot helps you study smarter with:
+            - Subject-specific chat assistance
+            - Syllabus management
+            - Exam preparation tools
+            - Personalized learning
+            
+            Login or register to get started!
+            """)
+        
+        with col2:
+            # Display welcome image
+            st.image("login.jpg", use_column_width=True)
+    
+    else:
         tab1, tab2, tab3 = st.tabs(["Chat", "Subjects & Syllabus", "Exam Mode"])
 
         with tab1:
