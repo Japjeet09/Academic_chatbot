@@ -16,10 +16,10 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy application code and login image
-COPY main_final.py .
+COPY app.py .
 COPY login.jpg .
 
 # Expose Streamlit default port
 EXPOSE 8501
 
-CMD ["streamlit", "run", "main_final.py", "--server.port=8501"]
+CMD ["streamlit", "run", "app.py", "--server.port=8501"]
