@@ -12,18 +12,19 @@ services:
       - mysql
       - qdrant
     environment:
-      MYSQL_HOST: mysql
-      MYSQL_USER: root
-      MYSQL_PASSWORD: Karan@04
-      MYSQL_DATABASE: academic_chatbot
+      MYSQL_HOST: ${MYSQL_HOST}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
       QDRANT_URL: http://qdrant:6333
+      GROQ_API_KEY: ${GROQ_API_KEY}
 
   mysql:
     image: mysql
     restart: always
     environment:
-      MYSQL_ROOT_PASSWORD: Karan@04
-      MYSQL_DATABASE: academic_chatbot
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
     ports:
       - "3310:3306"
     volumes:
