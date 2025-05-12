@@ -83,7 +83,7 @@ pip install -r requirements.txt
 
 4. Run the app
 ```bash
-python app.py
+streamlit run app.py
 ```
 
 5. Access the application at http://localhost:8510
