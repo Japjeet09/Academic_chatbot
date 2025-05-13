@@ -1790,6 +1790,10 @@ class AcademicChatbot:
             groq_api_key = os.getenv("GROQ_API_KEY"),
             model_name="llama-3.3-70b-versatile",
             )
+        
+        # Set token limits for context management
+        self.max_context_tokens = 4000
+        self.max_history_messages = 15 # Max number of messages to consider
 
         self.exam_mode = ExamMode(self.llm)
         self.syllabus_manager = SyllabusManager()
@@ -1801,8 +1805,11 @@ class AcademicChatbot:
         - Syllabus Topics: {syllabus}
         - Retrieved Syllabus Context: {syllabus_context}
         
-        Previous conversation for this subject:
-        {chat_history}
+        Previous conversation summary for this subject:
+        {chat_summary}
+
+        Most recent messages:
+        {recent_messages}
 
         Guidelines for responses:
         1. If the question relates to the selected subject's syllabus, prioritize information from the syllabus context
@@ -1814,6 +1821,36 @@ class AcademicChatbot:
         Human: {input}
         Assistant: """
 
+        # Template for summarization
+        self.summarization_template = """Summarize the following conversation between a user and an academic assistant.
+        Focus on capturing key topics discussed, important questions asked, and essential information provided.
+        Keep the summary concise but informative, emphasizing main subject matter concepts.
+
+        Conversation:
+        {conversation}
+        
+        Summary:"""
+
+    def _summarize_chat_history(self, history):
+        """Summarize a long chat history to save context space"""
+        if not history or len(history) < 5:  # Don't summarize short conversations
+            return ""
+            
+        # Format conversation for summarization
+        conversation = "\n".join([
+            f"{msg['role'].capitalize()}: {msg['content']}" 
+            for msg in history
+        ])
+        
+        try:
+            # Use the LLM to summarize the conversation
+            summarization_prompt = self.summarization_template.format(conversation=conversation)
+            summary = self.llm.predict(summarization_prompt)
+            return summary.strip()
+        except Exception as e:
+            # Fallback if summarization fails
+            return f"Prior conversation covered topics related to the subject. Error summarizing: {str(e)}"
+        
     def get_response(self, query: str, username: str, selected_subject: str, subject_chat_histories: Dict, use_syllabus_context: bool = True) -> str:
         try:
             user_id = self.db.get_user_id(username)
@@ -1826,31 +1863,46 @@ class AcademicChatbot:
                 subjects = self.db.get_user_subjects(user_id)
                 subject_id = next((s['id'] for s in subjects if s['subject_name'] == selected_subject), None)
 
-            # Get recent chat history with more context
-            chat_history = self.db.get_chat_history(user_id, subject_id, limit=10)
-            formatted_history = "\n".join([
+            # Get recent chat history (now we'll split it into segments)
+            chat_history = self.db.get_chat_history(user_id, subject_id, limit=30)  # Get more history
+
+            # Split history into recent messages and older history for summarization
+            recent_messages = chat_history[:3]  # Keep 3 most recent messages intact
+            older_history = chat_history[5:]    # Summarize older messages
+
+            # Format recent messages verbatim
+            formatted_recent  = "\n".join([
                 f"{msg['role'].capitalize()}: {msg['content']}" 
-                for msg in reversed(chat_history)
+                for msg in reversed(recent_messages)
             ])
+
+            # Summarize older history if it exists
+            chat_summary = ""
+            if older_history:
+                chat_summary = self._summarize_chat_history(older_history)
 
             # Get syllabus context
             syllabus_context = ""
+            syllabus_topics = []
             if use_syllabus_context and selected_subject != "All":
                 syllabus_context = self.syllabus_manager.get_relevant_context(
                     query, username, selected_subject
                 )
 
-            # Prepare prompt template with more context
-            full_context = f"""
-            Current Context:
-            - Subject: {selected_subject}
-            - Syllabus Context: {syllabus_context}
-            
-            Recent Conversation History:
-            {formatted_history}
+                # Get syllabus topics for better context
+                topics_data = st.session_state.user_manager.get_subject_topics(username, selected_subject)
+                if topics_data:
+                    syllabus_topics = topics_data.get('syllabus_topics', [])
 
-            New Query: {query}
-            """
+            # Prepare prompt template with summarized context
+            full_context = self.academic_template.format(
+                subject=selected_subject,
+                syllabus=", ".join(syllabus_topics[:10]),  # Limit number of topics
+                syllabus_context=syllabus_context,
+                chat_summary=chat_summary,
+                recent_messages=formatted_recent,
+                input=query
+            )
 
             # Generate response
             response = self.llm.predict(full_context)
